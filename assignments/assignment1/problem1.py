@@ -30,7 +30,8 @@ def rodrigues_formula(n, x, theta):
     # input: n, x, theta: axis, point, angle
     # output: x_new: new point after rotation
     # ------ TODO Student answer below -------
-    return np.zeros(3)
+    output = x + np.sin(theta) * np.cross(n, x) + (1 - np.cos(theta)) * np.cross(n, np.cross(n, x))
+    return output
     # ------ Student answer above -------
 
 
@@ -40,7 +41,9 @@ def rotate_euler(alpha, beta, gamma, x):
     # output: x_new: new point after rotation
 
     # ------ TODO Student answer below -------
-    return np.zeros(3)
+    R = euler_to_rotation_matrix(alpha, beta, gamma)
+    x_new = R.dot(x)
+    return x_new
     # ------ Student answer above -------
 
 
@@ -50,16 +53,37 @@ def euler_to_rotation_matrix(alpha, beta, gamma):
     # output: R: rotation matrix
 
     # ------ TODO Student answer below -------
-    return np.zeros((3,3))
+    R_0_1 = np.array([[np.cos(alpha), -np.sin(alpha), 0], [np.sin(alpha), np.cos(alpha), 0], [0, 0, 1]])
+    R_1_2 = np.array([[np.cos(beta), 0, np.sin(beta)], [0, 1, 0], [-np.sin(beta), 0, np.cos(beta)]])
+    R_2_3 = np.array([[np.cos(gamma), -np.sin(gamma), 0], [np.sin(gamma), np.cos(gamma), 0], [0, 0, 1]])
+    R = R_0_1.dot(R_1_2).dot(R_2_3)
+    return R
     # ------ Student answer above -------
 
+
+def rotation_matrix_to_axis_angle(R):
+    # Convert rotation matrix to axis-angle representation (n, theta)
+    # input: R: rotation matrix
+    # output: n, theta
+
+    # first check that R is not identity matrix
+    if np.allclose(R, np.eye(3)):
+        print(f"Warning: rotation matrix is identity matrix")
+        return np.eye(3), 0
+    theta = np.arccos((np.trace(R) - 1) / 2)
+    temp = np.array([R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]])
+    print("temp",temp)
+    n = 1 / (2 * np.sin(theta)) * np.array([R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]])
+    return n, theta
 
 def euler_to_axis_angle(alpha, beta, gamma):
     # Convert euler angles (alpha, beta, gamma) to axis-angle representation (n, theta)
     # input: alpha, beta, gamma: euler angles
     # output: n, theta
     # ------ TODO Student answer below -------
-    return np.zeros(3), 0
+    R = euler_to_rotation_matrix(alpha, beta, gamma)
+    n, theta = rotation_matrix_to_axis_angle(R)
+    return n, theta
     # ------ Student answer above -------
 
 
@@ -67,7 +91,7 @@ x_new_e = np.array([0.2, 0, 0])
 x_new_r = np.array([0.2, 0, 0])
 x_new_aa = np.array([0.2, 0, 0])
 
-for alpha, beta, gamma in zip([20, -25, 0], [45, 5, 135], [10, 90, -72]):
+for alpha, beta, gamma in zip([20, -25, 0], [45, 5, 135], [10, 90, -72]): 
     alpha = np.radians(alpha)
     beta = np.radians(beta)
     gamma = np.radians(gamma)
