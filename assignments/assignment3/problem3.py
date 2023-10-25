@@ -1,6 +1,9 @@
 import os
+
 import numpy as np
+
 import mengine as m
+
 
 class Node:
     def __init__(self, joint_angles, parent=None):
@@ -13,7 +16,7 @@ class Node:
         while node is not None:
             sequence.append(node)
             node = node.parent
-        return sequence[::-1] # Reverse the order of sequence
+        return sequence[::-1]  # Reverse the order of sequence
 
 
 def links_in_collision(body1, link1, body2, link2, max_distance=0.0):
@@ -49,24 +52,48 @@ def generate_path(q1, q2, step_size=0.05):
     q = q1
     yield q1
     for i in range(num_steps):
-        q = (1. / (num_steps - i)) * np.array(q2 - q) + q
+        q = (1.0 / (num_steps - i)) * np.array(q2 - q) + q
         yield q
 
 
 def extend(tree, target):
-    """Takes current tree and extend it towards a new node (`target`).
-    """
+    """Takes current tree and extend it towards a new node (`target`)."""
     closest_node = min(tree, key=lambda n: np.linalg.norm(n.angles - target))
     for q in generate_path(closest_node.angles, target):
         if robot_in_collision(q):
-            return closest_node, False
+            return closest_node, False, tree
         closest_node = Node(q, parent=closest_node)
         tree.append(closest_node)
-    return closest_node, True
+    return closest_node, True, tree
 
 
 def random_sample_config():
     return np.random.uniform(robot.ik_lower_limits[:7], robot.ik_upper_limits[:7])
+
+
+def connect(tree, target):
+    """
+    Implement the CONNECT algorithm
+    """
+    while True:
+        closest_node, extend_success, tree = extend(tree, target.angles)
+
+        if not extend_success:
+            # collision TRAPPED
+            S = 0
+            break
+        # elif np.linalg.norm(closest_node.angles - target.angles) < 0.05:
+        elif np.allclose(closest_node.angles, target.angles):
+            # REACHED
+            S = 1
+            break
+        else:
+            # ADVANCE
+            S = 2
+            # update the tree
+            tree.append(closest_node)
+
+    return closest_node, S, tree
 
 
 def rrt_connect(init, goal, max_iterations=100):
@@ -74,9 +101,66 @@ def rrt_connect(init, goal, max_iterations=100):
     reference: http://www.kuffner.org/james/papers/kuffner_icra2000.pdf
     """
     """TODO: Your Answer HERE"""
-    raise NotImplementedError
+    # implement rrt_connect
+    # initialize trees
+    tree_a = [Node(init)]
+    tree_b = [Node(goal)]
+
+    swap_count = 0
+
+    # iterate
+    for k in range(max_iterations):
+        print(f"rrt_connect iteration {k}")
+        q_rand = random_sample_config()
+        closest_node_a, extend_success_a, tree_a = extend(tree_a, q_rand)
+        if extend_success_a:
+            closest_node_b, S, tree_b = connect(tree_b, closest_node_a)
+            if S == 1:
+                print(f"Reached goal in {k} iterations")
+                if swap_count % 2 == 1:
+                    # swap again
+                    swap_count += 1
+                    tree_a, tree_b = tree_b, tree_a
+
+                node_path = tree_a[-1].retrace() + tree_b[-1].retrace()[::-1]
+                return [node.angles for node in node_path]
+        # swap trees
+        print(f"swap trees")
+        swap_count += 1
+        tree_a, tree_b = tree_b, tree_a
     return None
     """TODO: Your Answer END"""
+
+
+# def rrt_connect(init, goal, max_iterations=100):
+#     """Returns a path from init to goal, using rrt_connect method.
+#     reference: http://www.kuffner.org/james/papers/kuffner_icra2000.pdf
+#     """
+#     """TODO: Your Answer HERE"""
+#     # implement rrt_connect
+#     # initialize trees
+#     tree_a = [Node(init)]
+#     tree_b = [Node(goal)]
+
+#     # iterate
+#     for k in range(max_iterations):
+#         print(f"rrt_connect iteration {k}")
+#         q_rand = random_sample_config()
+#         closest_node_a, extend_success_a = extend(tree_a, q_rand)
+#         if extend_success_a:
+#             closest_node_b, extend_success_b = extend(tree_b, closest_node_a.angles)
+#             if extend_success_b:
+#                 print(f"Reached goal in {k} iterations")
+#                 if k % 2 == 1:
+#                     # swap again
+#                     tree_a, tree_b = tree_b, tree_a
+#                 node_path = tree_a[-1].retrace() + tree_b[-1].retrace()[::-1]
+#                 return [node.angles for node in node_path]
+#         # swap trees
+#         print(f"swap trees")
+#         tree_a, tree_b = tree_b, tree_a
+#     return None
+#     """TODO: Your Answer END"""
 
 
 def is_ee_close(robot, joint_angles, pos, orient):
@@ -86,52 +170,68 @@ def is_ee_close(robot, joint_angles, pos, orient):
     ee_pos, ee_orient = robot.get_link_pos_orient(robot.end_effector)
     robot.control(prev_joint_angles, set_instantly=True)
     return np.linalg.norm(ee_pos - pos) < 0.01 and (
-                np.linalg.norm(ee_orient - orient) < 0.01 or np.linalg.norm(ee_orient + orient) < 0.01)
+        np.linalg.norm(ee_orient - orient) < 0.01 or np.linalg.norm(ee_orient + orient) < 0.01
+    )
 
 
 def moveto(robot, pos, orient, avoid_collision=False, max_iter=100, max_path_length=150):
     if not avoid_collision:
-        print('Using simple move')
+        print("Using simple move")
         robot.motor_gains = 0.05
-        target_joint_angles = robot.ik(robot.end_effector, target_pos=pos, target_orient=orient,
-                                       use_current_joint_angles=True)
+        target_joint_angles = robot.ik(
+            robot.end_effector, target_pos=pos, target_orient=orient, use_current_joint_angles=True
+        )
         robot.control(target_joint_angles)
         while np.linalg.norm(robot.get_joint_angles(robot.controllable_joints) - target_joint_angles) > 0.03:
             m.step_simulation(realtime=True)
         return
 
-    print('Using RRT connect')
+    print("Using RRT connect")
     for i in range(max_iter):
-        print('moveto iteration %d' % i)
+        print("moveto iteration %d" % i)
         target_joint_angles = robot.ik(robot.end_effector, target_pos=pos, target_orient=orient)
         if not is_ee_close(robot, target_joint_angles, pos, m.get_quaternion(orient)):
-            print('ik solution too far, try next')
+            print("ik solution too far, try next")
             continue
 
         current_joint_angles = robot.get_joint_angles(robot.controllable_joints)
         path = rrt_connect(current_joint_angles, target_joint_angles)
 
         if path is not None and len(path) < max_path_length:
-            print('found rrt path')
+            print("found rrt path")
             robot.motor_gains = 0.2
             color = np.random.uniform(0, 1, 3).tolist() + [1]
             for joint_angles in path:
                 robot.control(joint_angles)
-                # Enable for Debug
+                # # Enable for Debug
                 # robot.control(joint_angles, set_instantly=True)
                 # ee_pos, ee_orient = robot.get_link_pos_orient(robot.end_effector)
-                # m.Shape(m.Sphere(.005), static=True, mass=0, position=ee_pos, orientation=ee_orient,
-                #         rgba=color, collision=False)
+                # m.Shape(
+                #     m.Sphere(0.005),
+                #     static=True,
+                #     mass=0,
+                #     position=ee_pos,
+                #     orientation=ee_orient,
+                #     rgba=color,
+                #     collision=False,
+                # )
                 step = 0
                 while np.linalg.norm(robot.get_joint_angles(robot.controllable_joints) - joint_angles) > 0.02:
                     m.step_simulation(realtime=True)
                     if step % 10 == 0:
                         ee_pos, ee_orient = robot.get_link_pos_orient(robot.end_effector)
-                        m.Shape(m.Sphere(.005), static=True, mass=0, position=ee_pos, orientation=ee_orient,
-                                rgba=color, collision=False)
+                        m.Shape(
+                            m.Sphere(0.005),
+                            static=True,
+                            mass=0,
+                            position=ee_pos,
+                            orientation=ee_orient,
+                            rgba=color,
+                            collision=False,
+                        )
                     step += 1
             return
-        print('no rrt path found')
+        print("no rrt path found")
 
 
 # Create environment and ground plane
@@ -140,11 +240,16 @@ ground = m.Ground()
 m.visualize_coordinate_frame()
 
 # Create table and wall
-table = m.URDF(filename=os.path.join(m.directory, 'table', 'table.urdf'), static=True, position=[0, 0, 0],
-               orientation=[0, 0, 0, 1])
-wall = m.Shape(m.Box(half_extents=[0.02, 0.2, 0.4]), static=True, position=[-0.2, 0, 0.85],
-               orientation=[0, 0, 1, 1],
-               rgba=[0, 1, 1, 0.75])
+table = m.URDF(
+    filename=os.path.join(m.directory, "table", "table.urdf"), static=True, position=[0, 0, 0], orientation=[0, 0, 0, 1]
+)
+wall = m.Shape(
+    m.Box(half_extents=[0.02, 0.2, 0.4]),
+    static=True,
+    position=[-0.2, 0, 0.85],
+    orientation=[0, 0, 1, 1],
+    rgba=[0, 1, 1, 0.75],
+)
 obstacles = [table, wall]
 
 # Create cubes to grasp
@@ -154,8 +259,16 @@ for i in range(3):
     size = 0.025
     position = [0.2 - i * 0.1, -0.2, 1]
     yaw = -np.pi / 4 * i
-    cubes.append(m.Shape(m.Box(half_extents=[size] * 3), static=False, mass=1, position=position,
-                         orientation=m.get_quaternion([0, 0, yaw]), rgba=[0, (i + 1) / 5.0, (i + 1) / 5.0, 0.75]))
+    cubes.append(
+        m.Shape(
+            m.Box(half_extents=[size] * 3),
+            static=False,
+            mass=1,
+            position=position,
+            orientation=m.get_quaternion([0, 0, yaw]),
+            rgba=[0, (i + 1) / 5.0, (i + 1) / 5.0, 0.75],
+        )
+    )
     cubes[-1].set_whole_body_frictions(lateral_friction=2000, spinning_friction=2000, rolling_friction=0)
 
 # Let the cube drop onto the table
@@ -181,7 +294,7 @@ for i, current_cube in enumerate(range(len(cubes))):
     moveto(robot, cube_pos, gripper_orient)
 
     # CLOSE
-    robot.set_gripper_position([0]*2, force=5000)
+    robot.set_gripper_position([0] * 2, force=5000)
     m.step_simulation(steps=100, realtime=True)
 
     # MOVETO goal
@@ -190,10 +303,10 @@ for i, current_cube in enumerate(range(len(cubes))):
     moveto(robot, [-0.1, 0.3, 0.8 + i * 0.05], default_euler, avoid_collision=True)
 
     # OPEN
-    robot.set_gripper_position([1]*2)
+    robot.set_gripper_position([1] * 2)
     m.step_simulation(steps=50, realtime=True)
     pos, ori = robot.get_link_pos_orient(robot.end_effector)
     moveto(robot, pos + [0, 0, 0.1], ori)
 
-print('Done')
+print("Done")
 m.step_simulation(steps=10000, realtime=True)

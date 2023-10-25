@@ -24,3 +24,5 @@ python3 example_push.py
 
 ![Manipulation Engine](images/mengine.jpg "Manipulation Engine")
 
+## Ruihan's notes
+* Use `git pull upstream main` to pull from Zacktory's origin repo and sync for future assignments.

@@ -1,13 +1,21 @@
-from scipy.interpolate import CubicSpline
 import os
+
 import numpy as np
-import mengine as m
+from scipy.interpolate import CubicSpline
 from scipy.linalg import expm
+
+import mengine as m
+
 np.set_printoptions(precision=3, suppress=True)
 
 # NOTE: This assignment asks you to Implement FK using screw coordinates.
 # Create environment and ground plane
 env = m.Env()
+
+# Robot configuration
+l1 = 0.5
+l2 = 0.4
+l3 = 0.3
 
 
 def reset_sim():
@@ -15,8 +23,9 @@ def reset_sim():
     ground = m.Ground([0, 0, -0.5])
     env.set_gui_camera(look_at_pos=[0, 0, 0.5], distance=1.5)
     # Create example robot
-    robot = m.URDF(filename=os.path.join(
-        m.directory, 'assignments', 'example_arm.urdf'), static=True, position=[0, 0, 0])
+    robot = m.URDF(
+        filename=os.path.join(m.directory, "assignments", "example_arm.urdf"), static=True, position=[0, 0, 0]
+    )
     robot.controllable_joints = [0, 1, 2]
     robot.end_effector = 3
     robot.update_joint_limits()
@@ -27,7 +36,7 @@ def sample_configuration():
     # Sample a random configuration for the robot.
     # NOTE: Be conscious of joint angle limits
     # output: q: joint angles of the robot
-    return np.random.uniform(low=[-np.pi, -np.pi/2, -np.pi/2], high=[np.pi/2, np.pi/2, np.pi/2])
+    return np.random.uniform(low=[-np.pi, -np.pi / 2, -np.pi / 2], high=[np.pi / 2, np.pi / 2, np.pi / 2])
 
 
 def get_exp_coordinates(omega, v, theta):
@@ -41,7 +50,19 @@ def get_exp_coordinates(omega, v, theta):
     #        theta: angle of rotation
     # output: E: exponential coordinates of the screw (4x4 matrix)
     # ------ TODO Student answer below -------
-    return np.eye(4)
+    # print(f"In function get_exp_coordinates, w shape is {omega.shape}, v shape is {v.shape}") # (3, ), (3, )
+    omega_matrix = np.array([[0, -omega[2], omega[1]], [omega[2], 0, -omega[0]], [-omega[1], omega[0], 0]])
+    exp_omega_theta = expm(omega_matrix * theta) # shape [3,3]
+    rightmost_col = (
+        theta * np.eye(3)
+        + (1 - np.cos(theta)) * omega_matrix
+        + (theta - np.sin(theta)) * omega_matrix @ omega_matrix
+    )
+    rightmost_col = np.dot(rightmost_col, v)
+    rightmost_col = rightmost_col[:, np.newaxis]
+    E = np.concatenate((exp_omega_theta, rightmost_col), axis=1)
+    E = np.concatenate((E, np.array([[0, 0, 0, 1]])), axis=0)
+    return E
     # ------ Student answer above -------
 
 
@@ -54,8 +75,49 @@ def calculate_FK(q, joint=3):
     # output: ee_position: position of the end effector
     #         ee_orientation: orientation of the end effector as a quaternion
     # ------ TODO Student answer below -------
-    # orientation = m.get_quaternion(orientation) # NOTE: If you used transformation matrices, call this function to get a quaternion
-    return np.zeros(3), np.array([0, 0, 0, 1])
+    M4 = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, l1 + l2 + l3], [0, 0, 0, 1]])
+    M3 = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, l1 + l2], [0, 0, 0, 1]])
+    M2 = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, l1], [0, 0, 0, 1]])
+    M1 = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]])
+
+    # # S1, S2, S3 in vector form
+    # S3 = np.array([1, 0, 0, 0, l1 + l2, 0])  # w1 = 1 rad/s about the x axis
+    # S2 = np.array([1, 0, 0, 0, l1, 0])  # w2 = 1 rad/s about the x axis
+    # S1 = np.array([0, 0, 1, 0, 0, 0])  # w3 = 1 rad/s about the z axis
+
+    w1 = np.array([0, 0, 1])
+    w2 = np.array([1, 0, 0])
+    w3 = np.array([1, 0, 0])
+    v1 = np.array([0, 0, 0])
+    v2 = np.array([0, l1, 0])
+    v3 = np.array([0, l1 + l2, 0])
+
+    # # write down the 4x4 matrix form for S1, S2, S3
+    # S1 = np.array([[0, -1, 0, 0], [1, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]])
+    # S2 = np.array([[0, 0, 0, 0], [0, 0, -1, l1], [0, 1, 0, 0], [0, 0, 0, 0]])
+    # S3 = np.array([0, 0, 0, 0], [0, 0, -1, l1], [0, 1, 0, 0], [0, 0, 0, 0])
+
+    # use the function get_exp_coordinates
+    E1 = get_exp_coordinates(w1, v1, q[0])
+    E2 = get_exp_coordinates(w2, v2, q[1])
+    E3 = get_exp_coordinates(w3, v3, q[2])
+
+    if joint == 3:
+        pose = E1 @ E2 @ E3 @ M4
+    elif joint == 2:
+        pose = E1 @ E2 @ M3
+    elif joint == 1:
+        pose = E1 @ M2
+    elif joint == 0:
+        pose = M1
+
+    ee_position = pose[:3, 3]
+    ee_orientation = pose[:3, :3]
+
+    ee_orientation = m.get_quaternion(
+        ee_orientation
+    )  # NOTE: If you used transformation matrices, call this function to get a quaternion
+    return ee_position, ee_orientation
     # ------ Student answer above -------
 
 
@@ -70,11 +132,10 @@ def compare_FK(ee_positions, ee_positions_pb, ee_orientations, ee_orientations_p
     for p1, p2 in zip(ee_positions, ee_positions_pb):
         distance_error_sum += np.linalg.norm(p1 - p2)
     for q1, q2 in zip(ee_orientations, ee_orientations_pb):
-        error = np.arccos(2*np.square(q1.dot(q2)) - 1)
+        error = np.arccos(2 * np.square(q1.dot(q2)) - 1)
         orientation_error_sum += 0 if np.isnan(error) else error
-    print('Average FK distance error:', distance_error_sum / len(ee_positions))
-    print('Average FK orientation error:',
-          orientation_error_sum / len(ee_orientations))
+    print("Average FK distance error:", distance_error_sum / len(ee_positions))
+    print("Average FK orientation error:", orientation_error_sum / len(ee_orientations))
 
 
 # ##########################################
@@ -82,13 +143,11 @@ def compare_FK(ee_positions, ee_positions_pb, ee_orientations, ee_orientations_p
 # Forward Kinematics using screw coordinates
 # ##########################################
 robot = reset_sim()
-
 # test cases
 q_test = np.array([[0, 0, 0], [-0.3, 0.7, 0.9], [0.8, 1.4, 1.2]])
 for q_i, idx in zip(q_test, range(3)):
     ee_pos, ee_orient = calculate_FK(q_i, joint=3)
-    print("ee position and orientation for testcase ",
-          idx, ": ", ee_pos, ee_orient)
+    print("ee position and orientation for testcase ", idx, ": ", ee_pos, ee_orient)
 
 ee_positions = []
 ee_orientations = []
@@ -108,8 +167,7 @@ for i in range(1000):
     ee_positions.append(ee_position)
     ee_orientations.append(ee_orientation)
     # calculate ee position, orientation using pybullet's FK
-    ee_position_pb, ee_orientation_pb = robot.get_link_pos_orient(
-        robot.end_effector)
+    ee_position_pb, ee_orientation_pb = robot.get_link_pos_orient(robot.end_effector)
     ee_positions_pb.append(ee_position_pb)
 
     ee_orientations_pb.append(ee_orientation_pb)
